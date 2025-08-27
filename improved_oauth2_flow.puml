@@ -1,0 +1,112 @@
+@startuml "oauth2_authorization_code_flow"
+'=== 헤더 ===
+skinparam ParticipantPadding 15
+skinparam BoxPadding 10
+skinparam sequence {
+    ArrowColor Blue
+    LifeLineBackgroundColor #EEEEEE
+    LifeLineBorderColor #AAAAAA
+    ActorBackgroundColor #LIGHTBLUE
+    ActorBorderColor #BLUE
+    ParticipantBackgroundColor #LIGHTYELLOW
+    ParticipantBorderColor #ORANGE
+}
+autonumber "<b>(#)</b>"
+title "**OAuth 2.0 Authorization Code Grant 흐름**"
+
+'=== 참여자 ===
+actor "사용자\n(Resource Owner)" as user #LIGHTBLUE
+participant "클라이언트 애플리케이션\n(Client)" as client <<Application>> #LIGHTYELLOW
+participant "인증 서버\n(Authorization Server)" as auth <<Server>> #LIGHTGREEN
+participant "리소스 서버\n(Resource Server)" as resource <<Server>> #LIGHTCORAL
+
+== 1. 인증 요청 (Authorization Request) ==
+
+note over user, resource: **사용자가 클라이언트를 통해 보호된 리소스에 접근을 시도**
+
+user -> client ++: 보호된 리소스 접근 요청
+client -> auth ++: **인증 요청 리다이렉트**\n**GET** /authorize?\nclient_id={CLIENT_ID}&\nresponse_type=code&\nredirect_uri={REDIRECT_URI}&\nscope={REQUESTED_SCOPES}&\nstate={CSRF_TOKEN}
+
+note right of auth: state 파라미터는\nCSRF 공격 방지용
+
+return **[200]** 로그인 페이지 제공
+
+== 2. 사용자 인증 및 권한 부여 ==
+
+auth -> user: 로그인 폼 제공
+user -> auth: **로그인 정보 제출**\n**POST** /login\n{username, password}
+
+auth -> auth: 사용자 인증 검증
+
+alt 인증 성공
+    auth -> user: **권한 부여 요청 화면**\n요청된 권한: {SCOPES}
+    user -> auth: **권한 부여 승인**\n**POST** /authorize\n{approve=true}
+    
+    auth -> auth: Authorization Code 생성\n(일회성, 단기간 유효)
+    
+    auth -> client: **인증 코드와 함께 리다이렉트**\n**[302]** {REDIRECT_URI}?\ncode={AUTHORIZATION_CODE}&\nstate={CSRF_TOKEN}
+    
+    note right of client: state 값을 검증하여\nCSRF 공격 방지
+    
+else 인증 실패 또는 권한 거부
+    auth -> client: **에러와 함께 리다이렉트**\n**[302]** {REDIRECT_URI}?\nerror=access_denied&\nstate={CSRF_TOKEN}
+end
+
+deactivate client
+
+== 3. 액세스 토큰 교환 (Token Exchange) ==
+
+client -> auth ++: **액세스 토큰 요청**\n**POST** /token\nAuthorization: Basic {CLIENT_CREDENTIALS}\nContent-Type: application/x-www-form-urlencoded\n\ngrant_type=authorization_code&\ncode={AUTHORIZATION_CODE}&\nredirect_uri={REDIRECT_URI}&\nclient_id={CLIENT_ID}
+
+note right of auth: 클라이언트 인증:\n1. Authorization header\n2. 또는 client_secret parameter
+
+auth -> auth: 인증 코드 검증:\n• 코드 유효성 확인\n• 클라이언트 인증\n• redirect_uri 일치 확인
+
+alt 검증 성공
+    auth -> auth: 액세스 토큰 및\n리프레시 토큰 생성
+    
+    return **[200]** JSON 응답\n{\n  "access_token": "{ACCESS_TOKEN}",\n  "token_type": "Bearer",\n  "expires_in": 3600,\n  "refresh_token": "{REFRESH_TOKEN}",\n  "scope": "{GRANTED_SCOPES}"\n}
+else 검증 실패
+    return **[400]** 에러 응답\n{\n  "error": "invalid_grant",\n  "error_description": "..."\n}
+end
+
+== 4. 보호된 리소스 접근 ==
+
+client -> resource ++: **보호된 리소스 요청**\n**GET** /api/protected-resource\nAuthorization: Bearer {ACCESS_TOKEN}
+
+resource -> resource: 액세스 토큰 검증:\n• 토큰 유효성\n• 권한 범위(scope)\n• 만료 시간
+
+alt 토큰 유효
+    return **[200]** 요청된 리소스 데이터\n{\n  "data": "protected resource"\n}
+else 토큰 무효
+    return **[401]** 인증 실패\n{\n  "error": "invalid_token"\n}
+end
+
+client -> user: 보호된 리소스 제공
+
+== 5. 토큰 갱신 (선택적) ==
+
+note over client, auth: **액세스 토큰 만료 시 리프레시 토큰으로 갱신**
+
+client -> auth: **토큰 갱신 요청**\n**POST** /token\nAuthorization: Basic {CLIENT_CREDENTIALS}\n\ngrant_type=refresh_token&\nrefresh_token={REFRESH_TOKEN}
+
+auth -> auth: 리프레시 토큰 검증
+
+alt 갱신 성공
+    auth -> auth: 새로운 액세스 토큰 생성
+    return **[200]** 새로운 토큰\n{\n  "access_token": "{NEW_ACCESS_TOKEN}",\n  "token_type": "Bearer",\n  "expires_in": 3600\n}
+else 갱신 실패
+    return **[400]** 갱신 실패\n사용자 재인증 필요
+end
+
+note over user, resource
+**🔐 보안 고려사항:**
+• Authorization Code: 일회성, 10분 이내 만료
+• Access Token: 제한된 수명 (보통 1시간)
+• Refresh Token: 장기간 보관, 보안 저장소 필요
+• HTTPS 필수 사용
+• CSRF 공격 방지를 위한 state 파라미터 사용
+• 클라이언트 인증 (client_secret 보호)
+end note
+
+@enduml
