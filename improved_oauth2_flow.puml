@@ -24,12 +24,12 @@ participant "리소스 서버\n(Resource Server)" as resource <<Server>> #LIGHTC
 
 note over user, resource: **사용자가 클라이언트를 통해 보호된 리소스에 접근을 시도**
 
-user -> client ++: 보호된 리소스 접근 요청
-client -> auth ++: **인증 요청 리다이렉트**\n**GET** /authorize?\nclient_id={CLIENT_ID}&\nresponse_type=code&\nredirect_uri={REDIRECT_URI}&\nscope={REQUESTED_SCOPES}&\nstate={CSRF_TOKEN}
+user -> client: 보호된 리소스 접근 요청
+client -> auth: **인증 요청 리다이렉트**\n**GET** /authorize?\nclient_id={CLIENT_ID}&\nresponse_type=code&\nredirect_uri={REDIRECT_URI}&\nscope={REQUESTED_SCOPES}&\nstate={CSRF_TOKEN}
 
 note right of auth: state 파라미터는\nCSRF 공격 방지용
 
-return **[200]** 로그인 페이지 제공
+auth -> client: **[302]** 로그인 페이지로 리다이렉트
 
 == 2. 사용자 인증 및 권한 부여 ==
 
@@ -52,11 +52,9 @@ else 인증 실패 또는 권한 거부
     auth -> client: **에러와 함께 리다이렉트**\n**[302]** {REDIRECT_URI}?\nerror=access_denied&\nstate={CSRF_TOKEN}
 end
 
-deactivate client
-
 == 3. 액세스 토큰 교환 (Token Exchange) ==
 
-client -> auth ++: **액세스 토큰 요청**\n**POST** /token\nAuthorization: Basic {CLIENT_CREDENTIALS}\nContent-Type: application/x-www-form-urlencoded\n\ngrant_type=authorization_code&\ncode={AUTHORIZATION_CODE}&\nredirect_uri={REDIRECT_URI}&\nclient_id={CLIENT_ID}
+client -> auth: **액세스 토큰 요청**\n**POST** /token\nAuthorization: Basic {CLIENT_CREDENTIALS}\nContent-Type: application/x-www-form-urlencoded\n\ngrant_type=authorization_code&\ncode={AUTHORIZATION_CODE}&\nredirect_uri={REDIRECT_URI}&\nclient_id={CLIENT_ID}
 
 note right of auth: 클라이언트 인증:\n1. Authorization header\n2. 또는 client_secret parameter
 
@@ -65,21 +63,21 @@ auth -> auth: 인증 코드 검증:\n• 코드 유효성 확인\n• 클라이�
 alt 검증 성공
     auth -> auth: 액세스 토큰 및\n리프레시 토큰 생성
     
-    return **[200]** JSON 응답\n{\n  "access_token": "{ACCESS_TOKEN}",\n  "token_type": "Bearer",\n  "expires_in": 3600,\n  "refresh_token": "{REFRESH_TOKEN}",\n  "scope": "{GRANTED_SCOPES}"\n}
+    auth -> client: **[200]** JSON 응답\n{\n  "access_token": "{ACCESS_TOKEN}",\n  "token_type": "Bearer",\n  "expires_in": 3600,\n  "refresh_token": "{REFRESH_TOKEN}",\n  "scope": "{GRANTED_SCOPES}"\n}
 else 검증 실패
-    return **[400]** 에러 응답\n{\n  "error": "invalid_grant",\n  "error_description": "..."\n}
+    auth -> client: **[400]** 에러 응답\n{\n  "error": "invalid_grant",\n  "error_description": "..."\n}
 end
 
 == 4. 보호된 리소스 접근 ==
 
-client -> resource ++: **보호된 리소스 요청**\n**GET** /api/protected-resource\nAuthorization: Bearer {ACCESS_TOKEN}
+client -> resource: **보호된 리소스 요청**\n**GET** /api/protected-resource\nAuthorization: Bearer {ACCESS_TOKEN}
 
 resource -> resource: 액세스 토큰 검증:\n• 토큰 유효성\n• 권한 범위(scope)\n• 만료 시간
 
 alt 토큰 유효
-    return **[200]** 요청된 리소스 데이터\n{\n  "data": "protected resource"\n}
+    resource -> client: **[200]** 요청된 리소스 데이터\n{\n  "data": "protected resource"\n}
 else 토큰 무효
-    return **[401]** 인증 실패\n{\n  "error": "invalid_token"\n}
+    resource -> client: **[401]** 인증 실패\n{\n  "error": "invalid_token"\n}
 end
 
 client -> user: 보호된 리소스 제공
@@ -94,9 +92,9 @@ auth -> auth: 리프레시 토큰 검증
 
 alt 갱신 성공
     auth -> auth: 새로운 액세스 토큰 생성
-    return **[200]** 새로운 토큰\n{\n  "access_token": "{NEW_ACCESS_TOKEN}",\n  "token_type": "Bearer",\n  "expires_in": 3600\n}
+    auth -> client: **[200]** 새로운 토큰\n{\n  "access_token": "{NEW_ACCESS_TOKEN}",\n  "token_type": "Bearer",\n  "expires_in": 3600\n}
 else 갱신 실패
-    return **[400]** 갱신 실패\n사용자 재인증 필요
+    auth -> client: **[400]** 갱신 실패\n사용자 재인증 필요
 end
 
 note over user, resource
